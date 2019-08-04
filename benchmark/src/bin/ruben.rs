@@ -27,7 +27,7 @@ use admission_control_proto::proto::admission_control_grpc::AdmissionControlClie
 use benchmark::{
     ruben_opt::{Opt, TransactionPattern},
     txn_generator::{
-        convert_load_to_txn_requests, gen_repeated_txn_load, LoadGenerator,
+        convert_load_to_txn_requests, gen_repeated_txn_load, AccountStorm, LoadGenerator,
         PairwiseTransferTxnGenerator, RingTransferTxnGenerator,
     },
     Benchmarker,
@@ -132,6 +132,7 @@ fn main() {
     let mut generator: Box<dyn LoadGenerator> = match args.txn_pattern {
         TransactionPattern::Ring => Box::new(RingTransferTxnGenerator::new()),
         TransactionPattern::Pairwise => Box::new(PairwiseTransferTxnGenerator::new()),
+        TransactionPattern::AccountStorm => Box::new(AccountStorm::new()),
     };
     measure_throughput(&mut bm, generator.deref_mut(), &mut faucet_account, &args);
 }

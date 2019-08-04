@@ -14,6 +14,7 @@ arg_enum! {
     pub enum TransactionPattern {
         Ring,
         Pairwise,
+        AccountStorm,
     }
 }
 

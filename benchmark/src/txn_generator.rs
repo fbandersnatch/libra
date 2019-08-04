@@ -170,8 +170,8 @@ pub fn gen_repeated_txn_load<T: LoadGenerator + ?Sized>(
 ) -> Vec<SubmitTransactionRequest> {
     let mut repeated_tx_reqs = vec![];
     for _ in 0..num_rounds {
-        let tx_reqs = txn_generator.gen_signed_txn_request_load(accounts);
-        repeated_tx_reqs.extend(tx_reqs.into_iter());
+        let txn_reqs = txn_generator.gen_signed_txn_request_load(accounts);
+        repeated_tx_reqs.extend(txn_reqs.into_iter());
     }
     convert_load_to_txn_requests(repeated_tx_reqs)
 }
@@ -274,5 +274,97 @@ impl LoadGenerator for PairwiseTransferTxnGenerator {
             }
         }
         txn_reqs
+    }
+}
+
+// TODO: frumious: default implementation for add_round(round_i) in TxnGenerator
+
+pub struct AccountStorm {
+    wallet: WalletLibrary,
+    num_accounts: u64,
+    genesis_accounts: Vec<AccountData>,
+    round_accounts: Vec<Vec<AccountAddress>>,
+}
+impl AccountStorm {
+    pub fn new() -> Self {
+        let wallet = WalletLibrary::new();
+        AccountStorm {
+            wallet,
+            num_accounts: 0,
+            genesis_accounts: vec![],
+            round_accounts: vec![],
+        }
+    }
+}
+impl LoadGenerator for AccountStorm {
+    fn gen_accounts(&mut self, num_accounts: u64) -> Vec<AccountData> {
+        // here we know how many accounts we got. This should be # of
+        // accounts generated per et every leaf
+        self.num_accounts = num_accounts;
+        // TODO: handle result
+        // This is for genesis accounts
+        //self.wallet.generate_addresses(num_accounts);
+        let genesis_accounts = gen_accounts_from_wallet(&mut self.wallet, num_accounts);
+        self.genesis_accounts = genesis_accounts;
+
+        // round 1 accounts:
+        // self.wallet.generate_addresses(num_accounts * num_accounts);
+        let round1_accounts =
+            gen_accounts_from_wallet(&mut self.wallet, num_accounts * num_accounts);
+        self.round_accounts
+            .push(round1_accounts.iter().map(|a| a.address).collect());
+        // Here's how we're going to do it:
+        // 1. mint N accounts
+        // Round: take existing accounts, generate n^2 accounts
+        // 2. Transfer (Coins / N) coins from i -> Ni, for all N accounts
+
+        // The ordering of setup (mint) and gen_accounts make this AccountStorm
+        // inconvenient to use, and need to write it out of order
+
+        // collect the addresses that I'd want to track by benchmarker:
+        // 1 out of each round1 account groups, should be total of num_accounts
+        let sample_accounts: Vec<AccountData> = round1_accounts
+            .into_iter()
+            .step_by(num_accounts as usize)
+            //.map(|a| a.clone()).into_iter()
+            .collect();
+        sample_accounts
+    }
+
+    fn gen_setup_txn_requests(
+        &self,
+        faucet_account: &mut AccountData,
+        _accounts: &mut [AccountData],
+    ) -> Vec<LoadRequest> {
+        gen_mint_txn_requests(faucet_account, &self.genesis_accounts)
+    }
+
+    fn gen_signed_txn_request_load(&self, _accounts: &mut [AccountData]) -> Vec<LoadRequest> {
+        // each account creates a -> n* transactions.
+        // for r number of rounds, but we don't know R :(
+
+        println!(
+            "How many accounts we have in round 1? {}",
+            self.round_accounts[0].len()
+        );
+        // how much money to send?
+        let transfer = FREE_LUNCH / self.num_accounts; // rounded down
+        self.genesis_accounts
+            .iter()
+            .zip(self.round_accounts[0].chunks(self.num_accounts as usize))
+            .flat_map(|(ref_sender, recepients)| {
+                let mut sender = AccountData {
+                    address: ref_sender.address,
+                    key_pair: None,
+                    sequence_number: 0,
+                    status: AccountStatus::Local,
+                };
+
+                recepients
+                    .iter()
+                    .flat_map(|r| gen_transfer_txn_request(&mut sender, r, &self.wallet, transfer))
+                    .collect::<Vec<LoadRequest>>()
+            })
+            .collect::<Vec<LoadRequest>>()
     }
 }
