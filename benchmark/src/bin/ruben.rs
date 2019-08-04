@@ -27,8 +27,8 @@ use admission_control_proto::proto::admission_control_grpc::AdmissionControlClie
 use benchmark::{
     ruben_opt::{Opt, TransactionPattern},
     txn_generator::{
-        convert_load_to_txn_requests, gen_repeated_txn_load, LoadGenerator,
-        PairwiseTransferTxnGenerator, RingTransferTxnGenerator,
+        convert_load_to_txn_requests, LoadGenerator, PairwiseTransferTxnGenerator,
+        RingTransferTxnGenerator,
     },
     Benchmarker,
 };
@@ -49,19 +49,26 @@ pub(crate) fn measure_throughput<T: LoadGenerator + ?Sized>(
     args: &Opt,
 ) {
     // Generate testing accounts.
-    let mut accounts: Vec<AccountData> = txn_generator.gen_accounts(args.num_accounts);
-    bm.register_accounts(&accounts);
+    let accounts = txn_generator.gen_accounts(args.num_accounts);
+    bm.register_accounts(accounts);
 
     // Submit setup/minting TXN requests.
-    let setup_requests = txn_generator.gen_setup_txn_requests(faucet_account, &mut accounts);
+    let setup_requests = txn_generator.gen_setup_txn_requests(faucet_account);
     let mint_txns = convert_load_to_txn_requests(setup_requests);
     bm.mint_accounts(&mint_txns, faucet_account);
 
     // Submit TXN load and measure throughput.
     let mut txn_throughput_seq = vec![];
+    // use admission_control_proto::proto::admission_control::SubmitTransactionRequest;
     for _ in 0..args.num_epochs {
-        let repeated_tx_reqs = gen_repeated_txn_load(txn_generator, &mut accounts, args.num_rounds);
-        let txn_throughput = bm.measure_txn_throughput(&repeated_tx_reqs, &mut accounts);
+        let reqs: Vec<_> = (0..args.num_rounds)
+            .flat_map(|i| {
+                let txn_reqs = txn_generator.gen_round_load(i);
+                convert_load_to_txn_requests(txn_reqs)
+            })
+            .collect();
+
+        let txn_throughput = bm.measure_txn_throughput(&reqs, txn_generator.mut_accounts());
         txn_throughput_seq.push(txn_throughput);
     }
     info!(

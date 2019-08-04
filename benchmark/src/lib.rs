@@ -284,10 +284,11 @@ impl Benchmarker {
         // 2) X's current persisted sequence number (X.sequence_number) >=
         //    X's previous persisted sequence number (self.prev_sequence_numbers[X])
         for sender in senders.iter_mut() {
+            //self.prev_sequnce_numbers.entry(&sender.address).or_insert(0);
             let prev_sequence_number = self
                 .prev_sequence_numbers
-                .get_mut(&sender.address)
-                .expect("Sender doesn't exist in Benchmark environment");
+                .entry(sender.address)
+                .or_insert(0);
             let sync_sequence_number = sync_sequence_numbers
                 .get(&sender.address)
                 .expect("Sender doesn't exist in validators");

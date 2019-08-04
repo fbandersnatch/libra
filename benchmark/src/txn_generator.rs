@@ -41,17 +41,14 @@ pub enum LoadRequest {
 /// Required methods are expected to be called in following specified order:
 pub trait LoadGenerator {
     /// 1. Generate arbitrary number of accounts.
-    fn gen_accounts(&mut self, num_accounts: u64) -> Vec<AccountData>;
+    fn gen_accounts(&mut self, num_accounts: u64) -> &Vec<AccountData>;
+    fn mut_accounts(&mut self) -> &mut Vec<AccountData>;
     /// 2. Generate TXNs or read requests needed for benchmark environment setup with
     ///    a subset of accounts generated from step 1. For example, minting accounts.
     ///    It is OK to return empty vector.
-    fn gen_setup_txn_requests(
-        &self,
-        faucet_account: &mut AccountData,
-        accounts: &mut [AccountData],
-    ) -> Vec<LoadRequest>;
-    /// 3. Generate arbitrary read/write requests from subset of accounts from step 1.
-    fn gen_signed_txn_request_load(&self, accounts: &mut [AccountData]) -> Vec<LoadRequest>;
+    fn gen_setup_txn_requests(&mut self, faucet_account: &mut AccountData) -> Vec<LoadRequest>;
+
+    fn gen_round_load(&mut self, round: u64) -> Vec<LoadRequest>;
 }
 
 /// ------------------------------------------------------------ ///
@@ -162,20 +159,6 @@ pub fn convert_load_to_txn_requests(reqs: Vec<LoadRequest>) -> Vec<SubmitTransac
         .collect()
 }
 
-/// Generate repeated TXNs from a type that implements LoadGenerator.
-pub fn gen_repeated_txn_load<T: LoadGenerator + ?Sized>(
-    txn_generator: &T,
-    accounts: &mut [AccountData],
-    num_rounds: u64,
-) -> Vec<SubmitTransactionRequest> {
-    let mut repeated_tx_reqs = vec![];
-    for _ in 0..num_rounds {
-        let tx_reqs = txn_generator.gen_signed_txn_request_load(accounts);
-        repeated_tx_reqs.extend(tx_reqs.into_iter());
-    }
-    convert_load_to_txn_requests(repeated_tx_reqs)
-}
-
 /// ------------------------------------------------------------------------ ///
 ///  Two LoadGenerator examples: circular transfers and pairwise transfers.  ///
 /// ------------------------------------------------------------------------ ///
@@ -186,37 +169,47 @@ pub fn gen_repeated_txn_load<T: LoadGenerator + ?Sized>(
 pub struct RingTransferTxnGenerator {
     /// Use the WalletLibrary to generate accounts and sign transfer TXNs.
     wallet: WalletLibrary,
+    accounts: Vec<AccountData>,
 }
 
 impl RingTransferTxnGenerator {
     pub fn new() -> Self {
         let wallet = WalletLibrary::new();
-        RingTransferTxnGenerator { wallet }
+        RingTransferTxnGenerator {
+            wallet,
+            accounts: vec![],
+        }
     }
 }
 
 impl LoadGenerator for RingTransferTxnGenerator {
-    fn gen_accounts(&mut self, num_accounts: u64) -> Vec<AccountData> {
-        gen_accounts_from_wallet(&mut self.wallet, num_accounts)
+    fn gen_accounts(&mut self, num_accounts: u64) -> &Vec<AccountData> {
+        let accounts = gen_accounts_from_wallet(&mut self.wallet, num_accounts);
+        self.accounts = accounts;
+        &self.accounts
+    }
+    fn mut_accounts(&mut self) -> &mut Vec<AccountData> {
+        &mut self.accounts
     }
 
-    fn gen_setup_txn_requests(
-        &self,
-        faucet_account: &mut AccountData,
-        accounts: &mut [AccountData],
-    ) -> Vec<LoadRequest> {
-        gen_mint_txn_requests(faucet_account, accounts)
+    fn gen_setup_txn_requests(&mut self, faucet_account: &mut AccountData) -> Vec<LoadRequest> {
+        gen_mint_txn_requests(faucet_account, &self.accounts)
     }
 
-    fn gen_signed_txn_request_load(&self, accounts: &mut [AccountData]) -> Vec<LoadRequest> {
-        let mut receiver_addrs: Vec<AccountAddress> =
-            accounts.iter().map(|account| account.address).collect();
+    fn gen_round_load(&mut self, _round: u64) -> Vec<LoadRequest> {
+        let mut receiver_addrs: Vec<AccountAddress> = self
+            .accounts
+            .iter()
+            .map(|account| account.address)
+            .collect();
         receiver_addrs.rotate_left(1);
-        accounts
+        let wallet = &self.wallet;
+
+        self.accounts
             .iter_mut()
             .zip(receiver_addrs.iter())
             .flat_map(|(sender, receiver_addr)| {
-                gen_transfer_txn_request(sender, receiver_addr, &self.wallet, 1).or_else(|e| {
+                gen_transfer_txn_request(sender, receiver_addr, wallet, 1).or_else(|e| {
                     error!(
                         "failed to generate {:?} to {:?} transfer TXN: {:?}",
                         sender.address, receiver_addr, e
@@ -234,33 +227,42 @@ impl LoadGenerator for RingTransferTxnGenerator {
 pub struct PairwiseTransferTxnGenerator {
     /// Use the WalletLibrary to generate accounts and sign transfer TXNs.
     wallet: WalletLibrary,
+    accounts: Vec<AccountData>,
 }
 
 impl PairwiseTransferTxnGenerator {
     pub fn new() -> Self {
         let wallet = WalletLibrary::new();
-        PairwiseTransferTxnGenerator { wallet }
+        PairwiseTransferTxnGenerator {
+            wallet,
+            accounts: vec![],
+        }
     }
 }
 
 impl LoadGenerator for PairwiseTransferTxnGenerator {
-    fn gen_accounts(&mut self, num_accounts: u64) -> Vec<AccountData> {
-        gen_accounts_from_wallet(&mut self.wallet, num_accounts)
+    fn gen_accounts(&mut self, num_accounts: u64) -> &Vec<AccountData> {
+        let accounts = gen_accounts_from_wallet(&mut self.wallet, num_accounts);
+        self.accounts = accounts;
+        &self.accounts
     }
 
-    fn gen_setup_txn_requests(
-        &self,
-        faucet_account: &mut AccountData,
-        accounts: &mut [AccountData],
-    ) -> Vec<LoadRequest> {
-        gen_mint_txn_requests(faucet_account, accounts)
+    fn mut_accounts(&mut self) -> &mut Vec<AccountData> {
+        &mut self.accounts
     }
 
-    fn gen_signed_txn_request_load(&self, accounts: &mut [AccountData]) -> Vec<LoadRequest> {
-        let receiver_addrs: Vec<AccountAddress> =
-            accounts.iter().map(|account| account.address).collect();
+    fn gen_setup_txn_requests(&mut self, faucet_account: &mut AccountData) -> Vec<LoadRequest> {
+        gen_mint_txn_requests(faucet_account, &self.accounts)
+    }
+
+    fn gen_round_load(&mut self, _round: u64) -> Vec<LoadRequest> {
+        let receiver_addrs: Vec<AccountAddress> = self
+            .accounts
+            .iter()
+            .map(|account| account.address)
+            .collect();
         let mut txn_reqs = vec![];
-        for sender in accounts.iter_mut() {
+        for sender in self.accounts.iter_mut() {
             for receiver_addr in receiver_addrs.iter() {
                 match gen_transfer_txn_request(sender, receiver_addr, &self.wallet, 1) {
                     Ok(txn_req) => txn_reqs.push(txn_req),
