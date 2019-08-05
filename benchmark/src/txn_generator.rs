@@ -278,3 +278,96 @@ impl LoadGenerator for PairwiseTransferTxnGenerator {
         txn_reqs
     }
 }
+
+pub struct AccountStorm {
+    wallet: WalletLibrary,
+    num_accounts: u64,
+    genesis_accounts: Vec<AccountData>,
+    round_accounts: Vec<Vec<AccountAddress>>,
+    accounts_to_verify: Vec<AccountData>,
+}
+
+impl AccountStorm {
+    pub fn new() -> Self {
+        let wallet = WalletLibrary::new();
+        AccountStorm {
+            wallet,
+            num_accounts: 0,
+            genesis_accounts: vec![],
+            round_accounts: vec![],
+            accounts_to_verify: vec![],
+        }
+    }
+}
+
+impl LoadGenerator for AccountStorm {
+    fn gen_accounts(&mut self, num_accounts: u64) -> &Vec<AccountData> {
+        // Use the initial number of accounts as the multiplication factor:
+        // as long as there's money, each account should create num_accounts
+        // new accounts
+        self.num_accounts = num_accounts;
+        // genesis accounts: the only accounts directly minted.
+        //self.wallet.generate_addresses(num_accounts);  // use this instead
+        let genesis_accounts = gen_accounts_from_wallet(&mut self.wallet, num_accounts);
+        self.genesis_accounts = genesis_accounts;
+
+        // round 1 accounts:
+        // self.wallet.generate_addresses(num_accounts * num_accounts);
+        let round1_accounts =
+            gen_accounts_from_wallet(&mut self.wallet, num_accounts * num_accounts);
+        self.round_accounts
+            .push(round1_accounts.iter().map(|a| a.address).collect());
+        // Here's how we're going to do it:
+        // 1. mint N accounts
+        // 2. Round:: accounts from round i-1 transfer to accounts on round i
+        // each account does num_account transfers, total of *n number of accounts
+        // 2. Transfer (Coins / N) coins from i -> Ni, for all N accounts
+
+        // TODO: the mint vs register_accounts in the binary make this
+        // AccountStorm inconvenient to use, and need to write it out of order
+
+        // collect the addresses that I'd want to track by benchmarker:
+        // 1 out of each round1 account groups, should be total of num_accounts
+        let sample_accounts: Vec<AccountData> = round1_accounts
+            .into_iter()
+            .step_by(num_accounts as usize)
+            .collect();
+        self.accounts_to_verify = sample_accounts;
+        &self.accounts_to_verify
+    }
+    fn mut_accounts(&mut self) -> &mut Vec<AccountData> {
+        &mut self.accounts_to_verify
+    }
+    fn gen_setup_txn_requests(&mut self, faucet_account: &mut AccountData) -> Vec<LoadRequest> {
+        gen_mint_txn_requests(faucet_account, &self.genesis_accounts)
+    }
+
+    fn gen_round_load(&mut self, round: u64) -> Vec<LoadRequest> {
+        // each account creates a -> n* transactions.
+        // for r number of rounds, but we don't know R :(
+        if round > 1 {
+            // handle only a single round for now
+            return vec![];
+        }
+
+        // how much money to send?
+        let transfer = FREE_LUNCH / self.num_accounts; // rounded down
+        self.genesis_accounts
+            .iter()
+            .zip(self.round_accounts[0].chunks(self.num_accounts as usize))
+            .flat_map(|(ref_sender, recepients)| {
+                let mut sender = AccountData {
+                    address: ref_sender.address,
+                    key_pair: None,
+                    sequence_number: 0,
+                    status: AccountStatus::Local,
+                };
+
+                recepients
+                    .iter()
+                    .flat_map(|r| gen_transfer_txn_request(&mut sender, r, &self.wallet, transfer))
+                    .collect::<Vec<LoadRequest>>()
+            })
+            .collect::<Vec<LoadRequest>>()
+    }
+}
