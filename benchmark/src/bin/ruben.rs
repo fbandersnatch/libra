@@ -50,6 +50,7 @@ pub(crate) fn measure_throughput<T: LoadGenerator + ?Sized>(
 ) {
     // Generate testing accounts.
     let accounts = txn_generator.gen_accounts(args.num_accounts);
+    // TODO: is it needed here?
     bm.register_accounts(accounts);
 
     // Submit setup/minting TXN requests.
@@ -59,9 +60,13 @@ pub(crate) fn measure_throughput<T: LoadGenerator + ?Sized>(
 
     // Submit TXN load and measure throughput.
     let mut txn_throughput_seq = vec![];
-    // use admission_control_proto::proto::admission_control::SubmitTransactionRequest;
+    // TODO: can epoc be the entire flow: full-recap of the entire run including
+    // creating accounts, minting, etc. Round be a soft synchronization point
+    // between transactions in the same round
     for _ in 0..args.num_epochs {
         let reqs: Vec<_> = (0..args.num_rounds)
+            // TODO: can we guarantee that round i transactions are submitted
+            // (strictly) before round i+i transactions?
             .flat_map(|i| {
                 let txn_reqs = txn_generator.gen_round_load(i);
                 convert_load_to_txn_requests(txn_reqs)
