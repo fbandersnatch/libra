@@ -49,7 +49,7 @@ pub struct ServiceMetrics {
 
 impl ServiceMetrics {
     pub fn default() -> ServiceMetrics {
-        let message_size_buckets = exponential_buckets(2.0, 2.0, 22)
+        let message_size_buckets = exponential_buckets(2.0, 2.0, 24)
             .expect("Could not create buckets for message-size histogram");
 
         ServiceMetrics {

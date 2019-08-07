@@ -532,15 +532,24 @@ where
         let num_txns_to_commit = txns_to_commit.len() as u64;
         {
             let _timer = OP_COUNTERS.timer("storage_save_transactions_time_s");
-            OP_COUNTERS.observe(
-                "storage_save_transactions.count",
-                txns_to_commit.len() as f64,
-            );
-            self.storage_write_client.save_transactions(
-                txns_to_commit,
-                version + 1 - num_txns_to_commit, /* first_version */
-                Some(ledger_info_with_sigs.clone()),
-            )?;
+            OP_COUNTERS.observe("storage_save_transactions.count", num_txns_to_commit as f64);
+            self.storage_write_client
+                .save_transactions(
+                    txns_to_commit,
+                    version + 1 - num_txns_to_commit, /* first_version */
+                    Some(ledger_info_with_sigs.clone()),
+                )
+                .map_err(|e| {
+                    // I expect the error here to be "too big; can't save"
+                    error!(
+                        "Failed to send save_transactions request with {} txn",
+                        num_txns_to_commit
+                    );
+                    // TODO: print estimated message size
+                    // TODO: add the size of the message, and the size of the
+                    // constituents
+                    e
+                })?;
         }
         // Only bump the counter when the commit succeeds.
         OP_COUNTERS.inc_by("num_accounts", num_accounts_created);
