@@ -109,19 +109,24 @@ impl ChainedBftProvider {
     fn initialize_setup(node_config: &mut NodeConfig) -> InitialSetup {
         // Keeping the initial set of validators in a node config is embarrassing and we should
         // all feel bad about it.
-        let peer_id_str = node_config.network.peer_id.clone();
+        let peer_id_str = node_config
+            .get_validator_network_config()
+            .unwrap()
+            .peer_id
+            .clone();
         let author =
             AccountAddress::try_from(peer_id_str).expect("Failed to parse peer id of a validator");
         let private_key = node_config
-            .network
-            .peer_keypairs
+            .consensus
+            .consensus_keypair
             .take_consensus_private()
             .expect(
             "Failed to move a Consensus private key from a NodeConfig, key absent or already read",
         );
         let signer = ValidatorSigner::new(author, private_key);
         let peers_with_public_keys = node_config
-            .network
+            .get_validator_network_config()
+            .unwrap()
             .trusted_peers
             .get_trusted_consensus_peers();
         let validator = ValidatorVerifier::new(peers_with_public_keys);
