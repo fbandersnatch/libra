@@ -30,6 +30,7 @@ use state_synchronizer::StateSynchronizer;
 use std::{
     cmp::min,
     convert::{TryFrom, TryInto},
+    str::FromStr,
     sync::Arc,
     thread,
     time::Instant,
@@ -179,16 +180,15 @@ pub fn setup_network(
             "Permissioned network end-points should use authentication"
         );
         let trusted_peers = config
-            .trusted_peers
-            .get_trusted_network_peers()
-            .clone()
-            .into_iter()
-            .map(|(peer_id, (signing_public_key, identity_public_key))| {
+            .network_peers
+            .peers
+            .iter()
+            .map(|(peer_id, keys)| {
                 (
-                    peer_id,
+                    PeerId::from_str(peer_id).unwrap(),
                     NetworkPublicKeys {
-                        signing_public_key,
-                        identity_public_key,
+                        signing_public_key: keys.network_signing_pubkey.clone(),
+                        identity_public_key: keys.network_identity_pubkey.clone(),
                     },
                 )
             })

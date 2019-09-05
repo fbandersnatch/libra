@@ -302,7 +302,7 @@ impl LibraSwarm {
             config,
         };
         // For each config launch a node
-        for (path, node_config) in swarm.config.get_configs() {
+        for (path, node_config) in &swarm.config.configs {
             let node =
                 LibraNode::launch(&node_config, &path, &logs_dir_path, disable_logging).unwrap();
             if node_config.is_validator() {
@@ -490,7 +490,7 @@ impl LibraSwarm {
     /// Vector with the debug ports of all the validators in the swarm.
     pub fn get_validators_debug_ports(&self) -> Vec<u16> {
         self.config
-            .get_configs()
+            .configs
             .iter()
             .map(|(_, c)| c.debug_interface.admission_control_node_debug_port)
             .collect()
@@ -521,7 +521,7 @@ impl LibraSwarm {
     ) -> std::result::Result<(), SwarmLaunchFailure> {
         let (path, config) = self
             .config
-            .get_configs()
+            .configs
             .iter()
             .find(|(_path, config)| config.networks.get(0).unwrap().peer_id == peer_id)
             .expect(
@@ -543,7 +543,7 @@ impl LibraSwarm {
     }
 
     pub fn get_trusted_peers_config_path(&self) -> String {
-        let (path, _) = self.config.get_trusted_peers_config();
+        let (path, _) = &self.config.consensus_peers;
         path.canonicalize()
             .expect("Unable to get canonical path of trusted peers config file")
             .to_str()

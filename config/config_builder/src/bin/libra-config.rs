@@ -97,16 +97,16 @@ fn main() {
     let generated_configs = config_builder.build().expect("Unable to generate configs");
 
     println!(
-        "Trusted Peers Config: {:?}",
-        generated_configs.get_trusted_peers_config().0
+        "Network Peers Config: {:?}",
+        &generated_configs.network_peers
     );
-
+    println!("Seed Peers Config: {:?}", &generated_configs.seed_peers);
     println!(
-        "Seed Peers Config: {:?}",
-        generated_configs.get_seed_peers_config().0
+        "Consensus Peers Config: {:?}",
+        &generated_configs.consensus_peers
     );
 
-    for (path, node_config) in generated_configs.get_configs() {
+    for (path, node_config) in generated_configs.configs {
         // For now, We consider the peer id on the first network config as the node's peer id.
         // TODO: Create a peer id independent node identifier.
         let network_config = node_config.networks.get(0).unwrap();

@@ -5,21 +5,24 @@
 use crate::util::gen_genesis_transaction;
 use config::{
     config::{
-        BaseConfig, ConsensusConfig, NetworkConfig, NodeConfig, NodeConfigHelpers, RoleType,
-        VMPublishingOption,
+        BaseConfig, ConsensusConfig, NetworkConfig, NodeConfig, NodeConfigHelpers,
+        PersistableConfig, RoleType, VMPublishingOption,
     },
     keys::{ConsensusKeyPair, NetworkKeyPairs},
     seed_peers::{SeedPeersConfig, SeedPeersConfigHelpers},
-    trusted_peers::{TrustedPeersConfig, TrustedPeersConfigHelpers},
+    trusted_peers::{
+        ConfigHelpers, ConsensusPeersConfig, NetworkPeerPrivateKeys, NetworkPeersConfig,
+    },
 };
 use crypto::{ed25519::*, test_utils::KeyPair};
 use failure::prelude::*;
 use std::path::{Path, PathBuf};
 
 pub struct SwarmConfig {
-    configs: Vec<(PathBuf, NodeConfig)>,
-    seed_peers: (PathBuf, SeedPeersConfig),
-    trusted_peers: (PathBuf, TrustedPeersConfig),
+    pub configs: Vec<(PathBuf, NodeConfig)>,
+    pub seed_peers: (PathBuf, SeedPeersConfig),
+    pub network_peers: (PathBuf, NetworkPeersConfig),
+    pub consensus_peers: (PathBuf, ConsensusPeersConfig),
 }
 
 impl SwarmConfig {
@@ -36,13 +39,23 @@ impl SwarmConfig {
     ) -> Result<Self> {
         // Generate trusted peer configs + their private keys.
         template.base.data_dir_path = output_dir.into();
-        let (mut peers_private_keys, trusted_peers_config) =
-            TrustedPeersConfigHelpers::get_test_config(num_nodes, key_seed);
-        let trusted_peers_file = template.networks.get(0).unwrap().trusted_peers_file.clone();
+
+        // Setup consensus keys and peers config file.
+        let consensus_peers_file = template.consensus.consensus_peers_file.clone();
+        let (mut consensus_private_keys, consensus_peers_config) =
+            ConfigHelpers::get_test_consensus_config(num_nodes, key_seed);
+        consensus_peers_config.save_config(&output_dir.join(&consensus_peers_file));
+
+        // Setup network keys and file.
+        let network_peers_file = template.networks.get(0).unwrap().network_peers_file.clone();
+        let (mut network_private_keys, network_peers_config) =
+            ConfigHelpers::get_test_network_peers_config(&consensus_peers_config, key_seed);
+        network_peers_config.save_config(&output_dir.join(&network_peers_file));
+
+        // Setup seed peers and file.
         let seed_peers_file = template.networks.get(0).unwrap().seed_peers_file.clone();
-        trusted_peers_config.save_config(&output_dir.join(&trusted_peers_file));
         let mut seed_peers_config = SeedPeersConfigHelpers::get_test_config_with_ipver(
-            &trusted_peers_config,
+            &network_peers_config,
             None,
             is_ipv4,
         );
@@ -50,7 +63,8 @@ impl SwarmConfig {
         gen_genesis_transaction(
             &output_dir.join(&template.execution.genesis_file_location),
             &faucet_key,
-            &trusted_peers_config,
+            &consensus_peers_config,
+            &network_peers_config,
         )?;
 
         let mut configs = Vec::new();
@@ -58,18 +72,12 @@ impl SwarmConfig {
         for (node_id, addrs) in &seed_peers_config.seed_peers {
             // serialize keypairs on independent {node}.node.keys.toml file
             // this is because the peer_keypairs field is skipped during (de)serialization
-            let (network_signing_private_key, network_identity_private_key, consensus_private_key) =
-                peers_private_keys
-                    .remove_entry(node_id.as_str())
-                    .expect(
-                        &format!(
-                            "Seed peer {} not present in peer private keys, aborting",
-                            node_id.as_str()
-                        )[..],
-                    )
-                    .1
-                    .get_key_triplet();
-            let consensus_keypair = ConsensusKeyPair::load(consensus_private_key);
+            let consensus_private_key = consensus_private_keys.remove_entry(node_id).unwrap().1;
+            let consensus_keypair = ConsensusKeyPair::load(Some(consensus_private_key));
+            let NetworkPeerPrivateKeys {
+                network_signing_private_key,
+                network_identity_private_key,
+            } = network_private_keys.remove_entry(node_id).unwrap().1;
             let network_keypairs =
                 NetworkKeyPairs::load(network_signing_private_key, network_identity_private_key);
             let mut validator_config = Self::get_config_by_role(
@@ -116,20 +124,12 @@ impl SwarmConfig {
         Ok(Self {
             configs,
             seed_peers: (output_dir.join(seed_peers_file), seed_peers_config),
-            trusted_peers: (output_dir.join(trusted_peers_file), trusted_peers_config),
+            network_peers: (output_dir.join(network_peers_file), network_peers_config),
+            consensus_peers: (
+                output_dir.join(consensus_peers_file),
+                consensus_peers_config,
+            ),
         })
-    }
-
-    pub fn get_configs(&self) -> &[(PathBuf, NodeConfig)] {
-        &self.configs
-    }
-
-    pub fn get_seed_peers_config(&self) -> &(PathBuf, SeedPeersConfig) {
-        &self.seed_peers
-    }
-
-    pub fn get_trusted_peers_config(&self) -> &(PathBuf, TrustedPeersConfig) {
-        &self.trusted_peers
     }
 
     fn get_config_by_role(
@@ -164,8 +164,8 @@ impl SwarmConfig {
             role: role_string,
             network_keypairs: NetworkKeyPairs::default(),
             network_keypairs_file: network_keys_file_name.into(),
-            trusted_peers: template_network.trusted_peers.clone(),
-            trusted_peers_file: template_network.trusted_peers_file.clone(),
+            network_peers: template_network.network_peers.clone(),
+            network_peers_file: template_network.network_peers_file.clone(),
             seed_peers: template_network.seed_peers.clone(),
             seed_peers_file: template_network.seed_peers_file.clone(),
             listen_address: template_network.listen_address.clone(),
@@ -184,6 +184,8 @@ impl SwarmConfig {
             pacemaker_initial_timeout_ms: template.consensus.pacemaker_initial_timeout_ms,
             consensus_keypair: ConsensusKeyPair::default(),
             consensus_keypair_file: consensus_keys_file_name.into(),
+            consensus_peers: template.consensus.consensus_peers.clone(),
+            consensus_peers_file: template.consensus.consensus_peers_file.clone(),
         };
         let mut config = NodeConfig {
             base: base_config,
@@ -333,21 +335,30 @@ impl SwarmConfigBuilder {
         let listen_address = listen_address.to_string();
         template.admission_control.address = listen_address.clone();
         template.debug_interface.address = listen_address;
-
         template.execution.genesis_file_location = "genesis.blob".to_string();
-
-        // Set and generate trusted peers config file
+        // Set and generate network peers config file
         if template
             .networks
             .get(0)
             .unwrap()
-            .trusted_peers_file
+            .network_peers_file
             .as_os_str()
             .is_empty()
         {
-            template.networks.get_mut(0).unwrap().trusted_peers_file =
-                PathBuf::from("trusted_peers.config.toml");
+            template.networks.get_mut(0).unwrap().network_peers_file =
+                PathBuf::from("network_peers.config.toml");
         };
+
+        // Set and generate network peers config file
+        if template
+            .consensus
+            .consensus_peers_file
+            .as_os_str()
+            .is_empty()
+        {
+            template.consensus.consensus_peers_file = PathBuf::from("consensus_peers.config.toml");
+        };
+
         // Set seed peers file and config. Config is populated in the loop below
         if template
             .networks

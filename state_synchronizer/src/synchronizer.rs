@@ -15,7 +15,7 @@ use futures::{
     SinkExt,
 };
 use network::validator_network::{StateSynchronizerEvents, StateSynchronizerSender};
-use std::{str::FromStr, sync::Arc};
+use std::sync::Arc;
 use tokio::runtime::{Builder, Runtime};
 use types::ledger_info::LedgerInfoWithSignatures;
 
@@ -31,21 +31,10 @@ impl StateSynchronizer {
         config: &NodeConfig,
         upstream_peer_ids: Vec<PeerId>,
     ) -> Self {
-        // TODO(abhayb): Send validator peer id -> pubkey map to executor proxy instead of trusted
-        // peers.
-        let trusted_peers = &config.networks.get(0).unwrap().trusted_peers.peers;
         let executor_proxy = ExecutorProxy::new(
             &config.execution,
             &config.storage,
-            trusted_peers
-                .iter()
-                .map(|(peer_id_str, trusted_peer_config)| {
-                    (
-                        PeerId::from_str(peer_id_str).unwrap(),
-                        trusted_peer_config.get_consensus_public().clone().unwrap(),
-                    )
-                })
-                .collect(),
+            config.consensus.get_consensus_peers(),
         );
         Self::bootstrap_with_executor_proxy(
             network,

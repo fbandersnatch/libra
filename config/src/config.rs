@@ -5,21 +5,24 @@ use crate::{
     config::ConsensusProposerType::{FixedProposer, MultipleOrderedProposers, RotatingProposer},
     keys::{ConsensusKeyPair, NetworkKeyPairs},
     seed_peers::{SeedPeersConfig, SeedPeersConfigHelpers},
-    trusted_peers::{TrustedPeersConfig, TrustedPeersConfigHelpers},
+    trusted_peers::{
+        ConfigHelpers, ConsensusPeersConfig, NetworkPeerPrivateKeys, NetworkPeersConfig,
+    },
     utils::{deserialize_whitelist, get_available_port, get_local_ip, serialize_whitelist},
 };
-use crypto::ValidKey;
+use crypto::{ed25519::Ed25519PublicKey, ValidKey};
 use failure::prelude::*;
 use logger::LoggerType;
 use parity_multiaddr::{Multiaddr, Protocol};
 use proto_conv::FromProtoBytes;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     convert::TryFrom,
     fs::File,
     io::{Read, Write},
     path::{Path, PathBuf},
+    str::FromStr,
     string::ToString,
 };
 use tempfile::TempDir;
@@ -347,11 +350,11 @@ pub struct NetworkConfig {
     #[serde(skip)]
     pub network_keypairs: NetworkKeyPairs,
     pub network_keypairs_file: PathBuf,
-    // trusted peers are the nodes allowed to connect when the network is started in permissioned
+    // network peers are the nodes allowed to connect when the network is started in permissioned
     // mode.
     #[serde(skip)]
-    pub trusted_peers: TrustedPeersConfig,
-    pub trusted_peers_file: PathBuf,
+    pub network_peers: NetworkPeersConfig,
+    pub network_peers_file: PathBuf,
     // seed_peers act as seed nodes for the discovery protocol.
     #[serde(skip)]
     pub seed_peers: SeedPeersConfig,
@@ -371,8 +374,8 @@ impl Default for NetworkConfig {
             is_permissioned: true,
             network_keypairs_file: PathBuf::from("network_keypairs.config.toml"),
             network_keypairs: NetworkKeyPairs::default(),
-            trusted_peers_file: PathBuf::from("trusted_peers.config.toml"),
-            trusted_peers: TrustedPeersConfig::default(),
+            network_peers_file: PathBuf::from("network_peers.config.toml"),
+            network_peers: NetworkPeersConfig::default(),
             seed_peers_file: PathBuf::from("seed_peers.config.toml"),
             seed_peers: SeedPeersConfig::default(),
         }
@@ -395,17 +398,17 @@ impl Clone for NetworkConfig {
             network_keypairs_file: self.network_keypairs_file.clone(),
             seed_peers: self.seed_peers.clone(),
             seed_peers_file: self.seed_peers_file.clone(),
-            trusted_peers: self.trusted_peers.clone(),
-            trusted_peers_file: self.trusted_peers_file.clone(),
+            network_peers: self.network_peers.clone(),
+            network_peers_file: self.network_peers_file.clone(),
         }
     }
 }
 
 impl NetworkConfig {
     pub fn load_config(&mut self, peer_id: Option<String>, path: &Path) -> Result<()> {
-        if !self.trusted_peers_file.as_os_str().is_empty() {
-            self.trusted_peers =
-                TrustedPeersConfig::load_config(path.with_file_name(&self.trusted_peers_file));
+        if !self.network_peers_file.as_os_str().is_empty() {
+            self.network_peers =
+                NetworkPeersConfig::load_config(path.with_file_name(&self.network_peers_file));
         }
         if !self.network_keypairs_file.as_os_str().is_empty() {
             self.network_keypairs =
@@ -453,6 +456,9 @@ pub struct ConsensusConfig {
     #[serde(skip)]
     pub consensus_keypair: ConsensusKeyPair,
     pub consensus_keypair_file: PathBuf,
+    #[serde(skip)]
+    pub consensus_peers: ConsensusPeersConfig,
+    pub consensus_peers_file: PathBuf,
 }
 
 impl Default for ConsensusConfig {
@@ -465,6 +471,8 @@ impl Default for ConsensusConfig {
             pacemaker_initial_timeout_ms: None,
             consensus_keypair: ConsensusKeyPair::default(),
             consensus_keypair_file: PathBuf::from("consensus_keypair.config.toml"),
+            consensus_peers: ConsensusPeersConfig::default(),
+            consensus_peers_file: PathBuf::from("consensus_peers.config.toml"),
         }
     }
 }
@@ -480,6 +488,8 @@ impl Clone for ConsensusConfig {
             pacemaker_initial_timeout_ms: self.pacemaker_initial_timeout_ms,
             consensus_keypair: self.consensus_keypair.clone(),
             consensus_keypair_file: self.consensus_keypair_file.clone(),
+            consensus_peers: self.consensus_peers.clone(),
+            consensus_peers_file: self.consensus_peers_file.clone(),
         }
     }
 }
@@ -499,6 +509,10 @@ impl ConsensusConfig {
         if !self.consensus_keypair_file.as_os_str().is_empty() {
             self.consensus_keypair =
                 ConsensusKeyPair::load_config(path.with_file_name(&self.consensus_keypair_file));
+        }
+        if !self.consensus_peers_file.as_os_str().is_empty() {
+            self.consensus_peers =
+                ConsensusPeersConfig::load_config(path.with_file_name(&self.consensus_peers_file));
         }
         Ok(())
     }
@@ -526,6 +540,24 @@ impl ConsensusConfig {
 
     pub fn pacemaker_initial_timeout_ms(&self) -> &Option<u64> {
         &self.pacemaker_initial_timeout_ms
+    }
+
+    pub fn get_consensus_peers(&self) -> HashMap<PeerId, Ed25519PublicKey> {
+        self.consensus_peers
+            .peers
+            .iter()
+            .map(|peer| {
+                (
+                    PeerId::from_str(&peer.account_address).unwrap_or_else(|_| {
+                        panic!(
+                            "Failed to deserialize PeerId: {} from consensus peers config: ",
+                            peer.account_address,
+                        )
+                    }),
+                    peer.consensus_pubkey.clone(),
+                )
+            })
+            .collect()
     }
 }
 
@@ -633,13 +665,6 @@ impl NodeConfig {
         Ok(config)
     }
 
-    pub fn save_config<P: AsRef<Path>>(&self, output_file: P) {
-        let contents = toml::to_vec(&self).expect("Error serializing");
-        let mut file = File::create(output_file).expect("Error opening file");
-
-        file.write_all(&contents).expect("Error writing file");
-    }
-
     /// Parses the config file into a Config object
     pub fn parse(config_string: &str) -> Result<Self> {
         assert!(!config_string.is_empty());
@@ -706,30 +731,29 @@ impl NodeConfigHelpers {
         if random_ports {
             NodeConfigHelpers::randomize_config_ports(&mut config);
         }
-
         if let Some(vm_publishing_option) = publishing_options {
             config.vm_config.publishing_options = vm_publishing_option;
         }
-
-        let (mut peers_private_keys, trusted_peers_test) =
-            TrustedPeersConfigHelpers::get_test_config(1, None);
-        let peer_id = trusted_peers_test.peers.keys().collect::<Vec<_>>()[0];
-        // load node's keypairs
-        let (network_signing_private_key, network_identity_private_key, consensus_private_key) =
-            peers_private_keys
-                .remove_entry(peer_id.as_str())
-                .unwrap()
-                .1
-                .get_key_triplet();
-        config.consensus.consensus_keypair = ConsensusKeyPair::load(consensus_private_key);
+        let (mut consensus_private_keys, test_consensus_peers) =
+            ConfigHelpers::get_test_consensus_config(1, None);
+        let peer_id = test_consensus_peers.peers[0].account_address.clone();
+        let consensus_private_key = consensus_private_keys.remove_entry(&peer_id).unwrap().1;
+        config.consensus.consensus_keypair = ConsensusKeyPair::load(Some(consensus_private_key));
+        // load node's network keypairs
+        let (mut network_private_keys, test_network_peers) =
+            ConfigHelpers::get_test_network_peers_config(&test_consensus_peers, None);
+        let NetworkPeerPrivateKeys {
+            network_signing_private_key,
+            network_identity_private_key,
+        } = network_private_keys.remove_entry(&peer_id).unwrap().1;
         // Setup node's peer id.
         let mut network = config.networks.get_mut(0).unwrap();
         network.peer_id = peer_id.clone();
         network.network_keypairs =
             NetworkKeyPairs::load(network_signing_private_key, network_identity_private_key);
-        network.trusted_peers = trusted_peers_test;
+        network.network_peers = test_network_peers;
         network.seed_peers = SeedPeersConfigHelpers::get_test_config(
-            &network.trusted_peers,
+            &network.network_peers,
             Self::get_tcp_port(&network.advertised_address),
         );
         NodeConfigHelpers::update_data_dir_path_if_needed(&mut config, ".")
@@ -858,12 +882,24 @@ impl VMConfig {
             publishing_options: VMPublishingOption::Locked(HashSet::new()),
         }
     }
+}
 
-    pub fn save_config<P: AsRef<Path>>(&self, output_file: P) {
+pub trait PersistableConfig: Serialize + DeserializeOwned {
+    fn load_config<P: AsRef<Path>>(path: P) -> Self {
+        let path = path.as_ref();
+        let mut file =
+            File::open(path).unwrap_or_else(|_| panic!("Cannot open config file {:?}", path));
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .unwrap_or_else(|_| panic!("Error reading config file {:?}", path));
+        toml::from_str(&contents).expect("Unable to parse config")
+    }
+
+    fn save_config<P: AsRef<Path>>(&self, output_file: P) {
         let contents = toml::to_vec(&self).expect("Error serializing");
-
         let mut file = File::create(output_file).expect("Error opening file");
-
         file.write_all(&contents).expect("Error writing file");
     }
 }
+
+impl<T: ?Sized> PersistableConfig for T where T: Serialize + DeserializeOwned {}

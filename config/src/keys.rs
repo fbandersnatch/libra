@@ -1,6 +1,4 @@
-use crate::trusted_peers::{
-    deserialize_key, deserialize_opt_key, serialize_key, serialize_opt_key,
-};
+use crate::trusted_peers::{deserialize_key, serialize_key};
 use crypto::{
     ed25519::*,
     test_utils::TEST_SEED,
@@ -188,27 +186,6 @@ impl Default for ConsensusKeyPair {
 }
 
 impl ConsensusKeyPair {
-    // used to deserialize keypairs from a configuration file
-    pub fn load_config<P: AsRef<Path>>(path: P) -> Self {
-        let path = path.as_ref();
-        let mut file = File::open(path)
-            .unwrap_or_else(|_| panic!("Cannot open Consensus keypair Config file {:?}", path));
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)
-            .unwrap_or_else(|_| panic!("Error reading Consensus keypair Config file {:?}", path));
-        Self::parse(&contents)
-    }
-
-    fn parse(config_string: &str) -> Self {
-        toml::from_str(config_string).expect("Unable to parse Config")
-    }
-    // used to serialize keypairs to a configuration file
-    pub fn save_config<P: AsRef<Path>>(&self, output_file: P) {
-        let contents = toml::to_vec(&self).expect("Error serializing");
-        let mut file = File::create(output_file).expect("Error opening file");
-        file.write_all(&contents).expect("Error writing file");
-    }
-
     // used in testing to fill the structure with test keypairs
     pub fn load(consensus_private_key: Option<Ed25519PrivateKey>) -> Self {
         let (consensus_private_key, consensus_public_key) = {
@@ -230,4 +207,30 @@ impl ConsensusKeyPair {
     pub fn take_consensus_private(&mut self) -> Option<Ed25519PrivateKey> {
         self.consensus_private_key.take()
     }
+}
+
+pub fn serialize_opt_key<S, K>(opt_key: &Option<K>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+    K: Serialize + ValidKeyStringExt,
+{
+    opt_key
+        .as_ref()
+        .map_or(Ok("".to_string()), |key| {
+            key.to_encoded_string()
+                .map_err(<S::Error as serde::ser::Error>::custom)
+        })
+        .and_then(|str| serializer.serialize_str(&str[..]))
+}
+
+pub fn deserialize_opt_key<'de, D, K>(deserializer: D) -> Result<Option<K>, D::Error>
+where
+    D: Deserializer<'de>,
+    K: ValidKeyStringExt + DeserializeOwned + 'static,
+{
+    let encoded_key: String = Deserialize::deserialize(deserializer)?;
+
+    ValidKeyStringExt::from_encoded_string(&encoded_key)
+        .map_err(<D::Error as serde::de::Error>::custom)
+        .map(Some)
 }
