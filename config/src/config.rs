@@ -347,7 +347,7 @@ pub struct NetworkConfig {
     // The role of the node in the network. One of: {"validator", "full_node"}.
     pub role: String,
     // network_keypairs contains the node's network keypairs.
-    // it is filled later on from peer_keypairs_file.
+    // it is filled later on from network_keypairs_file.
     #[serde(skip)]
     pub network_keypairs: NetworkKeyPairs,
     pub network_keypairs_file: PathBuf,
@@ -432,7 +432,7 @@ pub struct ConsensusConfig {
     pub max_pruned_blocks_in_mem: Option<u64>,
     pub pacemaker_initial_timeout_ms: Option<u64>,
     // consensus_keypair contains the node's consensus keypair.
-    // it is filled later on from peer_keypairs_file.
+    // it is filled later on from consensus_keypair_file.
     #[serde(skip)]
     pub consensus_keypair: ConsensusKeyPair,
     pub consensus_keypair_file: PathBuf,
@@ -675,14 +675,16 @@ impl NodeConfigHelpers {
         None
     }
 
-    /// Returns a simple test config for single node. It does not have correct trusted_peers_file,
-    /// peer_keypairs_file, and seed_peers_file set and expected that callee will provide these
+    /// Returns a simple test config for single node. It does not have correct network_peers_file,
+    /// consensus_peers_file, network_keypairs_file, consensus_keypair_file, and seed_peers_file
+    /// set. It is expected that the callee will provide these.
     pub fn get_single_node_test_config(random_ports: bool) -> NodeConfig {
         Self::get_single_node_test_config_publish_options(random_ports, None)
     }
 
-    /// Returns a simple test config for single node. It does not have correct trusted_peers_file,
-    /// peer_keypairs_file, and seed_peers_file set and expected that callee will provide these
+    /// Returns a simple test config for single node. It does not have correct network_peers_file,
+    /// consensus_peers_file, network_keypairs_file, consensus_keypair_file, and seed_peers_file
+    /// set. It is expected that the callee will provide these.
     /// `publishing_options` is either one of either `Open` or `CustomScripts` only.
     pub fn get_single_node_test_config_publish_options(
         random_ports: bool,

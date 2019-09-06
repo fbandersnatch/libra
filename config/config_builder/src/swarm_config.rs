@@ -70,8 +70,9 @@ impl SwarmConfig {
         let mut configs = Vec::new();
         // Generate configs for all nodes.
         for (node_id, addrs) in &seed_peers_config.seed_peers {
-            // serialize keypairs on independent {node}.node.keys.toml file
-            // this is because the peer_keypairs field is skipped during (de)serialization
+            // Serialize keypairs on independent {node}.node.keys.toml file. This is because the
+            // network_keypairs and consensus_keypair fields are skipped during
+            // (de)serialization.
             let consensus_private_key = consensus_private_keys.remove_entry(node_id).unwrap().1;
             let consensus_keypair = ConsensusKeyPair::load(Some(consensus_private_key));
             let NetworkPeerPrivateKeys {
