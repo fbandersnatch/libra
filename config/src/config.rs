@@ -326,6 +326,7 @@ impl Default for StorageConfig {
     }
 }
 
+#[cfg_attr(any(test, feature = "testing"), derive(Clone))]
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct NetworkConfig {
@@ -382,28 +383,6 @@ impl Default for NetworkConfig {
     }
 }
 
-#[cfg(any(test, feature = "testing"))]
-impl Clone for NetworkConfig {
-    fn clone(&self) -> Self {
-        Self {
-            peer_id: self.peer_id.clone(),
-            listen_address: self.listen_address.clone(),
-            advertised_address: self.advertised_address.clone(),
-            discovery_interval_ms: self.discovery_interval_ms,
-            connectivity_check_interval_ms: self.connectivity_check_interval_ms,
-            enable_encryption_and_authentication: self.enable_encryption_and_authentication,
-            is_permissioned: self.is_permissioned,
-            role: self.role.clone(),
-            network_keypairs: self.network_keypairs.clone(),
-            network_keypairs_file: self.network_keypairs_file.clone(),
-            seed_peers: self.seed_peers.clone(),
-            seed_peers_file: self.seed_peers_file.clone(),
-            network_peers: self.network_peers.clone(),
-            network_peers_file: self.network_peers_file.clone(),
-        }
-    }
-}
-
 impl NetworkConfig {
     pub fn load_config(&mut self, peer_id: Option<String>, path: &Path) -> Result<()> {
         if !self.network_peers_file.as_os_str().is_empty() {
@@ -443,6 +422,7 @@ impl NetworkConfig {
     }
 }
 
+#[cfg_attr(any(test, feature = "testing"), derive(Clone))]
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ConsensusConfig {
@@ -473,23 +453,6 @@ impl Default for ConsensusConfig {
             consensus_keypair_file: PathBuf::from("consensus_keypair.config.toml"),
             consensus_peers: ConsensusPeersConfig::default(),
             consensus_peers_file: PathBuf::from("consensus_peers.config.toml"),
-        }
-    }
-}
-
-#[cfg(any(test, feature = "testing"))]
-impl Clone for ConsensusConfig {
-    fn clone(&self) -> Self {
-        Self {
-            max_block_size: self.max_block_size,
-            proposer_type: self.proposer_type.clone(),
-            contiguous_rounds: self.contiguous_rounds,
-            max_pruned_blocks_in_mem: self.max_pruned_blocks_in_mem,
-            pacemaker_initial_timeout_ms: self.pacemaker_initial_timeout_ms,
-            consensus_keypair: self.consensus_keypair.clone(),
-            consensus_keypair_file: self.consensus_keypair_file.clone(),
-            consensus_peers: self.consensus_peers.clone(),
-            consensus_peers_file: self.consensus_peers_file.clone(),
         }
     }
 }
