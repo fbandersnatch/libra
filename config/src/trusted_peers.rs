@@ -38,6 +38,7 @@ pub struct NetworkPeerPrivateKeys {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConsensusPeer {
+    #[serde(rename = "aa")]
     pub account_address: String,
     #[serde(serialize_with = "serialize_key")]
     #[serde(deserialize_with = "deserialize_key")]
